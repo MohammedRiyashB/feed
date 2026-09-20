@@ -5,7 +5,25 @@ import {
   Shield, SlidersHorizontal, Sparkles, UserRound, Users, Video, X, Repeat2, Flag,
   Palette, Accessibility, FileText, Check, KeyRound, LogOut
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { User } from "firebase/auth";
+import {
+  conversationIdFor,
+  ensureAuth,
+  ensureUserProfile,
+  firebaseEnabled,
+  publishPost,
+  reactToPost,
+  sendMessage,
+  touchConversation,
+  watchAuth,
+  watchMessages,
+  watchPosts,
+  watchUsers,
+  type FeedMessage,
+  type FeedPost,
+  type FeedUser,
+} from "./lib/firebase";
 
 type Screen =
   | "home" | "search" | "notifications" | "messages" | "profile"
@@ -22,7 +40,7 @@ type SettingsItem = {
 };
 
 type Post = {
-  id: number;
+  id: string | number;
   name: string;
   handle: string;
   time: string;
@@ -90,6 +108,43 @@ export default function FeedApp() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [settingsSearch, setSettingsSearch] = useState("");
   const [following, setFollowing] = useState<string[]>(["@adnan"]);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [backendReady, setBackendReady] = useState(false);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    const unsubscribe = watchAuth(async (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        await ensureUserProfile(user);
+        setBackendReady(true);
+      }
+    });
+    void ensureAuth().catch(() => setBackendReady(false));
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchPosts((remote) => {
+      const mapped: Post[] = remote.map((p) => ({
+        id: p.id,
+        name: p.name,
+        handle: p.handle,
+        time: formatPostTime(p.createdAt),
+        text: p.text,
+        replies: p.replies || 0,
+        reposts: p.reposts || 0,
+        likes: p.likes || 0,
+        views: p.views || 0,
+        liked: false,
+        reposted: false,
+        bookmarked: false,
+        avatar: initials(p.name),
+      }));
+      setPosts(mapped);
+    });
+  }, []);
 
   const filteredPosts = useMemo(() => {
     if (!query.trim()) return posts;
@@ -102,39 +157,59 @@ export default function FeedApp() {
     window.setTimeout(() => setToast(""), 1800);
   };
 
-  const toggleLike = (id: number) => {
-    setPosts((cur) => cur.map((p) => p.id === id ? {
-      ...p, liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1),
-    } : p));
+  const toggleLike = async (id: string | number) => {
+    const current = posts.find((p) => p.id === id);
+    if (!current) return;
+    const next = !current.liked;
+    setPosts((cur) => cur.map((p) => p.id === id ? { ...p, liked: next, likes: p.likes + (next ? 1 : -1) } : p));
+    if (firebaseEnabled && typeof id === "string") {
+      try { await reactToPost(id, "likes", next ? 1 : -1); } catch { notify("Could not update like"); }
+    }
   };
 
-  const toggleRepost = (id: number) => {
-    setPosts((cur) => cur.map((p) => p.id === id ? {
-      ...p, reposted: !p.reposted, reposts: p.reposts + (p.reposted ? -1 : 1),
-    } : p));
+  const toggleRepost = async (id: string | number) => {
+    const current = posts.find((p) => p.id === id);
+    if (!current) return;
+    const next = !current.reposted;
+    setPosts((cur) => cur.map((p) => p.id === id ? { ...p, reposted: next, reposts: p.reposts + (next ? 1 : -1) } : p));
+    if (firebaseEnabled && typeof id === "string") {
+      try { await reactToPost(id, "reposts", next ? 1 : -1); } catch { notify("Could not update repost"); }
+    }
   };
 
   const toggleBookmark = (id: number) => {
     setPosts((cur) => cur.map((p) => p.id === id ? { ...p, bookmarked: !p.bookmarked } : p));
   };
 
-  const publish = () => {
+  const publish = async () => {
     const text = draft.trim();
     if (!text) return;
+    if (firebaseEnabled) {
+      if (!firebaseUser) { notify("Connecting to Feed…"); return; }
+      try {
+        await publishPost(firebaseUser, text);
+        setDraft("");
+        setComposer(false);
+        notify("Posted to Feed");
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Could not publish");
+      }
+      return;
+    }
     setPosts((cur) => [{
       id: Date.now(), name: "Riyash B", handle: "@riyashb", time: "now", text,
       tag: "#NewPost", replies: 0, reposts: 0, likes: 0, views: 0, avatar: "RB",
     }, ...cur]);
     setDraft("");
     setComposer(false);
-    notify("Posted");
+    notify("Demo post created");
   };
 
   const render = () => {
     switch (screen) {
       case "search": return <SearchScreen query={query} setQuery={setQuery} onOpen={setScreen} />;
       case "notifications": return <NotificationsScreen />;
-      case "messages": return <MessagesScreen notify={notify} />;
+      case "messages": return <MessagesScreen notify={notify} user={firebaseUser} />;
       case "profile": return <ProfileScreen posts={posts} onPost={() => setComposer(true)} />;
       case "bookmarks": return <BookmarksScreen posts={posts} onLike={toggleLike} onRepost={toggleRepost} onBookmark={toggleBookmark} notify={notify} />;
       case "lists": return <ListsScreen notify={notify} />;
@@ -254,7 +329,7 @@ export default function FeedApp() {
               );
             })}
           </section>
-          <footer className="footer-links">Terms · Privacy · Safety · Accessibility · © 2026 Feed</footer>
+          <footer className="footer-links">{firebaseEnabled && backendReady ? "Live backend connected" : "Demo mode"} · Terms · Privacy · Safety · Accessibility · © 2026 Feed</footer>
         </aside>
       </div>
 
@@ -365,14 +440,58 @@ function NotificationsScreen() {
   );
 }
 
-function MessagesScreen({ notify }: { notify: (s: string) => void }) {
-  const chats = [["Adnan", "Tomorrow lab iruka?", "AD", "9:12 PM"], ["Maya Chen", "See this new design!", "MC", "8:45 PM"], ["College Group", "Notes.pdf", "CG", "7:58 PM"], ["Future Lab", "New video is live", "FL", "6:41 PM"]];
+function MessagesScreen({ notify, user }: { notify: (s: string) => void; user: User | null }) {
+  const [users, setUsers] = useState<FeedUser[]>([]);
+  const [selected, setSelected] = useState<FeedUser | null>(null);
+  const [messages, setMessages] = useState<FeedMessage[]>([]);
+  const [text, setText] = useState("");
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchUsers((items) => setUsers(items.filter((x) => x.uid !== user?.uid)));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!firebaseEnabled || !user || !selected) return;
+    const conversationId = conversationIdFor(user.uid, selected.uid);
+    void touchConversation(conversationId, [user.uid, selected.uid]).catch(() => {});
+    return watchMessages(conversationId, setMessages);
+  }, [user, selected]);
+
+  const send = async () => {
+    const value = text.trim();
+    if (!value || !user || !selected) return;
+    try {
+      await sendMessage(user, conversationIdFor(user.uid, selected.uid), value);
+      setText("");
+    } catch {
+      notify("Message could not be sent");
+    }
+  };
+
+  if (!firebaseEnabled) {
+    return <div className="page-panel messages"><div className="section-title-row"><div><small>DEMO MODE</small><h2>Messages</h2></div><button onClick={() => notify("Configure Firebase to enable real messaging")}><PenLine size={18} /></button></div><div className="message-note"><Shield size={16} /> Real-time messaging is disabled until the Firebase environment variables are configured.</div></div>;
+  }
+
   return (
     <div className="page-panel messages">
-      <div className="section-title-row"><div><small>INBOX</small><h2>Messages</h2></div><button onClick={() => notify("New message")}><PenLine size={18} /></button></div>
-      <div className="message-tabs"><button className="active">All</button><button>Requests</button><button>Archived</button></div>
-      {chats.map((x) => <button className="message-row" key={x[0]} onClick={() => notify("Opening " + x[0])}><Avatar value={x[2]} /><span><strong>{x[0]}</strong><small>{x[1]}</small></span><time>{x[3]}</time></button>)}
-      <div className="message-note"><Shield size={16} /> End-to-end secure messaging can be connected to the production backend.</div>
+      <div className="section-title-row"><div><small>LIVE INBOX</small><h2>Messages</h2></div><span className="live-status">● Live</span></div>
+      {!selected ? (
+        <>
+          <div className="message-tabs"><button className="active">People</button><button>Requests</button><button>Archived</button></div>
+          {users.length === 0 && <div className="empty"><Users size={28} /><h2>No other Feed users yet</h2><p>When another user joins, they will appear here.</p></div>}
+          {users.map((person) => <button className="message-row" key={person.uid} onClick={() => setSelected(person)}><Avatar value={initials(person.name)} /><span><strong>{person.name}</strong><small>@{person.handle.replace(/^@/, "")}</small></span><ChevronRight size={16} /></button>)}
+        </>
+      ) : (
+        <>
+          <div className="chat-head"><button onClick={() => setSelected(null)}><ChevronLeft size={18} /></button><Avatar value={initials(selected.name)} /><div><strong>{selected.name}</strong><small>@{selected.handle.replace(/^@/, "")}</small></div></div>
+          <div className="chat-messages">
+            {messages.map((m) => <div className={m.senderId === user?.uid ? "chat-bubble mine" : "chat-bubble"} key={m.id}>{m.text}</div>)}
+            {!messages.length && <div className="empty"><MessageCircle size={26} /><p>Start the conversation.</p></div>}
+          </div>
+          <div className="message-input"><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…" onKeyDown={(e) => { if (e.key === "Enter") void send(); }} /><button onClick={() => void send()} disabled={!text.trim()}><Send size={18} /></button></div>
+        </>
+      )}
     </div>
   );
 }
@@ -539,6 +658,23 @@ function ComposerModal({ draft, setDraft, onClose, onPublish }: { draft: string;
       </div>
     </div>
   );
+}
+
+
+function initials(name: string) {
+  return name.split(/\s+/).map((x) => x[0]).join("").slice(0, 2).toUpperCase() || "FD";
+}
+
+function formatPostTime(value: unknown) {
+  const date = value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function"
+    ? (value as { toDate: () => Date }).toDate()
+    : value instanceof Date ? value : null;
+  if (!date) return "now";
+  const seconds = Math.max(1, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
 }
 
 function EmptyState() {
