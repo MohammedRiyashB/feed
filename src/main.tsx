@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App";
-import "./styles.css";
+import FeedApp from "./FeedApp";
+import "./feed.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <FeedApp />
   </StrictMode>,
 );
