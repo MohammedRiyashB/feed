@@ -21,7 +21,6 @@ import {
   watchPosts,
   watchUsers,
   type FeedMessage,
-  type FeedPost,
   type FeedUser,
 } from "./lib/firebase";
 
@@ -388,9 +387,9 @@ function PostCard({
   post, onLike, onRepost, onBookmark, notify,
 }: {
   post: Post;
-  onLike: (id: number) => void;
-  onRepost: (id: number) => void;
-  onBookmark: (id: number) => void;
+  onLike: (id: string | number) => void;
+  onRepost: (id: string | number) => void;
+  onBookmark: (id: string | number) => void;
   notify: (s: string) => void;
 }) {
   return (
@@ -515,7 +514,7 @@ function ProfileScreen({ posts, onPost }: { posts: Post[]; onPost: () => void })
   );
 }
 
-function BookmarksScreen({ posts, onLike, onRepost, onBookmark, notify }: { posts: Post[]; onLike: (id: number) => void; onRepost: (id: number) => void; onBookmark: (id: number) => void; notify: (s: string) => void }) {
+function BookmarksScreen({ posts, onLike, onRepost, onBookmark, notify }: { posts: Post[]; onLike: (id: string | number) => void; onRepost: (id: string | number) => void; onBookmark: (id: string | number) => void; notify: (s: string) => void }) {
   const saved = posts.filter((p) => p.bookmarked || p.id === 1);
   return <div className="page-panel"><div className="section-title-row"><div><small>SAVED</small><h2>Bookmarks</h2></div><button onClick={() => notify("Bookmark folders")}><ListIcon size={18} /></button></div><div className="bookmark-toolbar"><button className="active">All</button><button>Folders</button></div>{saved.map((p) => <PostCard key={p.id} post={p} onLike={onLike} onRepost={onRepost} onBookmark={onBookmark} notify={notify} />)}</div>;
 }
