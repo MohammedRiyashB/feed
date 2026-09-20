@@ -110,6 +110,21 @@ export async function reactToPost(postId: string, field: "likes" | "reposts", de
   await updateDoc(doc(db, "posts", postId), { [field]: increment(delta) });
 }
 
+export function watchUsers(callback: (users: FeedUser[]) => void, count = 50) {
+  if (!db) {
+    callback([]);
+    return () => {};
+  }
+  const q = query(collection(db, "users"), orderBy("name", "asc"), limit(count));
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map((d) => ({ uid: d.id, ...(d.data() as Omit<FeedUser, "uid">) })));
+  });
+}
+
+export function conversationIdFor(a: string, b: string) {
+  return [a, b].sort().join("__");
+}
+
 export async function sendMessage(user: User, conversationId: string, text: string) {
   if (!db) throw new Error("Firebase is not configured");
   return addDoc(collection(db, "conversations", conversationId, "messages"), {
