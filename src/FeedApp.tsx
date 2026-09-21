@@ -1,681 +1,106 @@
+import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Bookmark, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Heart, Home,
-  Image as ImageIcon, Languages, List as ListIcon, Mail, Menu, MessageCircle,
-  Mic2, MoreHorizontal, PenLine, Plus, Radio, Search, Send, Settings, Share2,
-  Shield, SlidersHorizontal, Sparkles, UserRound, Users, Video, X, Repeat2, Flag,
-  Palette, Accessibility, FileText, Check, KeyRound, LogOut
+  Activity, AlertTriangle, ArrowRight, Battery, Bluetooth, Camera, CheckCircle2,
+  ChevronRight, CircleGauge, Clock3, Cpu, Droplets, Fingerprint, HeartPulse, Home,
+  Info, Layers3, Menu, Microscope, Play, Radio, RefreshCw, ShieldCheck,
+  Thermometer, UserRound, Wifi, X, Zap
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { User } from "firebase/auth";
-import {
-  conversationIdFor,
-  ensureAuth,
-  ensureUserProfile,
-  firebaseEnabled,
-  publishPost,
-  reactToPost,
-  sendMessage,
-  touchConversation,
-  watchAuth,
-  watchMessages,
-  watchPosts,
-  watchUsers,
-  type FeedMessage,
-  type FeedUser,
-} from "./lib/firebase";
 
-type Screen =
-  | "home" | "search" | "notifications" | "messages" | "profile"
-  | "bookmarks" | "lists" | "communities" | "spaces" | "settings"
-  | "account" | "privacy" | "security" | "notifications-settings"
-  | "display" | "content" | "accessibility" | "language" | "help"
-  | "drafts" | "subscriptions";
+type Screen = "dashboard"|"vitals"|"heart"|"spo2"|"ecg"|"biometric"|"devices"|"research"|"settings";
 
-type SettingsItem = {
-  id: Screen;
-  title: string;
-  subtitle?: string;
-  icon: typeof Settings;
-};
-
-type Post = {
-  id: string | number;
-  name: string;
-  handle: string;
-  time: string;
-  text: string;
-  tag?: string;
-  replies: number;
-  reposts: number;
-  likes: number;
-  views: number;
-  liked?: boolean;
-  reposted?: boolean;
-  bookmarked?: boolean;
-  avatar: string;
-  verified?: boolean;
-  media?: "sunset" | "city" | "code";
-};
-
-const postsSeed: Post[] = [
-  {
-    id: 1, name: "Riyash B", handle: "@riyashb", time: "2h",
-    text: "Building a place where conversations, creators, communities and ideas live together. Simple, fast and open.",
-    tag: "#Feed", replies: 42, reposts: 126, likes: 1840, views: 32000,
-    liked: true, avatar: "RB", verified: true, media: "sunset",
-  },
-  {
-    id: 2, name: "Maya Chen", handle: "@mayachen", time: "4h",
-    text: "The best social products make it effortless to move from a thought to a conversation.",
-    tag: "#ProductDesign", replies: 18, reposts: 63, likes: 712, views: 8400,
-    avatar: "MC", media: "code",
-  },
-  {
-    id: 3, name: "Future Lab", handle: "@futurelab", time: "6h",
-    text: "AI is becoming a creative tool for everyone. What are you building with it?",
-    tag: "#AI", replies: 91, reposts: 204, likes: 3240, views: 64000,
-    avatar: "FL", verified: true, media: "city",
-  },
-];
-
-const trends = [
-  ["AI & Technology", "24.2K posts"], ["Student Life", "18.7K posts"], ["Football", "14.1K posts"],
-  ["Movies", "11.8K posts"], ["Design", "9.4K posts"], ["India", "46.9K posts"],
+const modules = [
+  ["heart","Heart Rate","Camera PPG / wearable BPM",HeartPulse],
+  ["spo2","SpO₂","Blood oxygen monitoring",Droplets],
+  ["ecg","ECG Lab","Signal visualization & analysis",Activity],
+  ["biometric","Biometrics","Platform fingerprint security",Fingerprint],
+  ["devices","Device Hub","Sensors, BLE & IoT devices",Bluetooth],
+  ["research","BME Lab","Biomedical tools & learning",Microscope],
 ] as const;
 
-const people = [
-  ["Adnan", "@adnan", "AD"], ["Maya Chen", "@mayachen", "MC"], ["Future Lab", "@futurelab", "FL"],
-] as const;
-
-function Avatar({ value, verified = false }: { value: string; verified?: boolean }) {
-  return (
-    <span className="avatar">
-      {value}
-      {verified && <span className="verified"><Check size={9} /></span>}
-    </span>
-  );
+function title(s: Screen) {
+  return ({dashboard:"Clinical Dashboard",vitals:"Vital Monitor",heart:"Heart Rate",spo2:"SpO₂ Monitor",ecg:"ECG Laboratory",biometric:"Biometric Security",devices:"Device Hub",research:"Biomedical Engineering Lab",settings:"System Settings"} as Record<Screen,string>)[s];
 }
 
 export default function FeedApp() {
-  const [screen, setScreen] = useState<Screen>("home");
-  const [posts, setPosts] = useState<Post[]>(postsSeed);
-  const [query, setQuery] = useState("");
-  const [composer, setComposer] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [toast, setToast] = useState("");
-  const [menu, setMenu] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [settingsSearch, setSettingsSearch] = useState("");
-  const [following, setFollowing] = useState<string[]>(["@adnan"]);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [backendReady, setBackendReady] = useState(false);
-
-  useEffect(() => {
-    if (!firebaseEnabled) return;
-    const unsubscribe = watchAuth(async (user) => {
-      setFirebaseUser(user);
-      if (user) {
-        await ensureUserProfile(user);
-        setBackendReady(true);
-      }
-    });
-    void ensureAuth().catch(() => setBackendReady(false));
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (!firebaseEnabled) return;
-    return watchPosts((remote) => {
-      const mapped: Post[] = remote.map((p) => ({
-        id: p.id,
-        name: p.name,
-        handle: p.handle,
-        time: formatPostTime(p.createdAt),
-        text: p.text,
-        replies: p.replies || 0,
-        reposts: p.reposts || 0,
-        likes: p.likes || 0,
-        views: p.views || 0,
-        liked: false,
-        reposted: false,
-        bookmarked: false,
-        avatar: initials(p.name),
-      }));
-      setPosts(mapped);
-    });
-  }, []);
-
-  const filteredPosts = useMemo(() => {
-    if (!query.trim()) return posts;
-    const q = query.toLowerCase();
-    return posts.filter((p) => (p.name + p.handle + p.text + (p.tag ?? "")).toLowerCase().includes(q));
-  }, [posts, query]);
-
-  const notify = (text: string) => {
-    setToast(text);
-    window.setTimeout(() => setToast(""), 1800);
-  };
-
-  const toggleLike = async (id: string | number) => {
-    const current = posts.find((p) => p.id === id);
-    if (!current) return;
-    const next = !current.liked;
-    setPosts((cur) => cur.map((p) => p.id === id ? { ...p, liked: next, likes: p.likes + (next ? 1 : -1) } : p));
-    if (firebaseEnabled && typeof id === "string") {
-      try { await reactToPost(id, "likes", next ? 1 : -1); } catch { notify("Could not update like"); }
-    }
-  };
-
-  const toggleRepost = async (id: string | number) => {
-    const current = posts.find((p) => p.id === id);
-    if (!current) return;
-    const next = !current.reposted;
-    setPosts((cur) => cur.map((p) => p.id === id ? { ...p, reposted: next, reposts: p.reposts + (next ? 1 : -1) } : p));
-    if (firebaseEnabled && typeof id === "string") {
-      try { await reactToPost(id, "reposts", next ? 1 : -1); } catch { notify("Could not update repost"); }
-    }
-  };
-
-  const toggleBookmark = (id: number) => {
-    setPosts((cur) => cur.map((p) => p.id === id ? { ...p, bookmarked: !p.bookmarked } : p));
-  };
-
-  const publish = async () => {
-    const text = draft.trim();
-    if (!text) return;
-    if (firebaseEnabled) {
-      if (!firebaseUser) { notify("Connecting to Feed…"); return; }
-      try {
-        await publishPost(firebaseUser, text);
-        setDraft("");
-        setComposer(false);
-        notify("Posted to Feed");
-      } catch (error) {
-        notify(error instanceof Error ? error.message : "Could not publish");
-      }
-      return;
-    }
-    setPosts((cur) => [{
-      id: Date.now(), name: "Riyash B", handle: "@riyashb", time: "now", text,
-      tag: "#NewPost", replies: 0, reposts: 0, likes: 0, views: 0, avatar: "RB",
-    }, ...cur]);
-    setDraft("");
-    setComposer(false);
-    notify("Demo post created");
-  };
-
-  const render = () => {
-    switch (screen) {
-      case "search": return <SearchScreen query={query} setQuery={setQuery} onOpen={setScreen} />;
-      case "notifications": return <NotificationsScreen />;
-      case "messages": return <MessagesScreen notify={notify} user={firebaseUser} />;
-      case "profile": return <ProfileScreen posts={posts} onPost={() => setComposer(true)} />;
-      case "bookmarks": return <BookmarksScreen posts={posts} onLike={toggleLike} onRepost={toggleRepost} onBookmark={toggleBookmark} notify={notify} />;
-      case "lists": return <ListsScreen notify={notify} />;
-      case "communities": return <CommunitiesScreen notify={notify} />;
-      case "spaces": return <SpacesScreen notify={notify} />;
-      case "drafts": return <DraftsScreen notify={notify} />;
-      case "subscriptions": return <SubscriptionsScreen />;
-      case "settings":
-        return <SettingsScreen search={settingsSearch} setSearch={setSettingsSearch} onOpen={setScreen} />;
-      case "account":
-      case "privacy":
-      case "security":
-      case "notifications-settings":
-      case "display":
-      case "content":
-      case "accessibility":
-      case "language":
-      case "help":
-        return <SettingsDetail screen={screen} onBack={() => setScreen("settings")} notify={notify} />;
-      default:
-        return (
-          <>
-            <ComposerInline onOpen={() => setComposer(true)} />
-            <FeedTabs screen={screen} setScreen={setScreen} />
-            <div className="feed">
-              {(screen === "home" ? filteredPosts : filteredPosts.filter((p) => p.id !== 3)).map((p) => (
-                <PostCard
-                  key={p.id}
-                  post={p}
-                  onLike={toggleLike}
-                  onRepost={toggleRepost}
-                  onBookmark={toggleBookmark}
-                  notify={notify}
-                />
-              ))}
-              {!filteredPosts.length && <EmptyState />}
-            </div>
-          </>
-        );
-    }
-  };
-
-  const primaryNav: [Screen, string, typeof Home][] = [
-    ["home", "Home", Home],
-    ["search", "Search", Search],
-    ["notifications", "Notifications", Bell],
-    ["messages", "Messages", Mail],
-    ["profile", "Profile", UserRound],
+  const [screen,setScreen]=useState<Screen>("dashboard");
+  const [menu,setMenu]=useState(false);
+  const [simulation,setSimulation]=useState(true);
+  const nav:[Screen,string,typeof HeartPulse][]=[
+    ["dashboard","Dashboard",Home],["vitals","Vital Monitor",CircleGauge],["heart","Heart Rate",HeartPulse],["spo2","SpO₂",Droplets],
+    ["ecg","ECG Lab",Activity],["biometric","Biometrics",Fingerprint],["devices","Device Hub",Bluetooth],["research","BME Lab",Microscope]
   ];
-
-  return (
-    <div className={`app ${theme}`}>
-      <header className="mobile-header">
-        <button className="icon-btn" onClick={() => setMenu((v) => !v)}><Menu size={21} /></button>
-        <button className="mobile-logo" onClick={() => setScreen("home")}>∞</button>
-        <button className="icon-btn" onClick={() => setScreen("profile")}><Avatar value="RB" /></button>
-      </header>
-
-      <div className="shell">
-        <aside className="left-sidebar">
-          <button className="logo" onClick={() => setScreen("home")}>∞</button>
-          <nav>
-            {primaryNav.map(([id, label, Icon]) => (
-              <button key={id} className={screen === id ? "side-link active" : "side-link"} onClick={() => setScreen(id)}>
-                <Icon size={24} /><span>{label}</span>
-                {id === "notifications" && <b>3</b>}
-              </button>
-            ))}
-            <button className="side-link" onClick={() => setScreen("bookmarks")}><Bookmark size={24} /><span>Bookmarks</span></button>
-            <button className="side-link" onClick={() => setScreen("lists")}><ListIcon size={24} /><span>Lists</span></button>
-            <button className="side-link" onClick={() => setScreen("communities")}><Users size={24} /><span>Communities</span></button>
-            <button className="side-link" onClick={() => setScreen("spaces")}><Mic2 size={24} /><span>Live audio</span></button>
-          </nav>
-
-          <button className="post-cta" onClick={() => setComposer(true)}><PenLine size={20} /><span>Post</span></button>
-          <button className="more-nav" onClick={() => setMenu((v) => !v)}><MoreHorizontal size={24} /><span>More</span></button>
-
-          <div className="account-card" onClick={() => setScreen("profile")}>
-            <Avatar value="RB" />
-            <div><strong>Riyash B</strong><span>@riyashb</span></div>
-            <MoreHorizontal size={18} />
-          </div>
-        </aside>
-
-        <main className="feed-column">
-          <div className="desktop-titlebar">
-            <div><strong>{screen === "home" ? "Home" : screen[0].toUpperCase() + screen.slice(1).replaceAll("-", " ")}</strong></div>
-            <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><Sparkles size={17} /></button>
-          </div>
-          {render()}
-        </main>
-
-        <aside className="right-sidebar">
-          <div className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search Feed" /></div>
-          <section className="right-card">
-            <h2>What’s happening</h2>
-            {trends.map(([title, count]) => (
-              <button className="trend" key={title} onClick={() => { setQuery(title); setScreen("search"); }}>
-                <span><small>Trending</small><strong>{title}</strong><small>{count}</small></span>
-                <MoreHorizontal size={16} />
-              </button>
-            ))}
-            <button className="show-more" onClick={() => setScreen("search")}>Show more</button>
-          </section>
-          <section className="right-card">
-            <h2>Who to follow</h2>
-            {people.map(([name, handle, avatar]) => {
-              const isFollowing = following.includes(handle);
-              return (
-                <div className="person" key={handle}>
-                  <Avatar value={avatar} />
-                  <div><strong>{name}</strong><span>{handle}</span></div>
-                  <button className={isFollowing ? "following-btn" : "follow-btn"} onClick={() => setFollowing((v) => isFollowing ? v.filter((x) => x !== handle) : [...v, handle])}>
-                    {isFollowing ? "Following" : "Follow"}
-                  </button>
-                </div>
-              );
-            })}
-          </section>
-          <footer className="footer-links">{firebaseEnabled && backendReady ? "Live backend connected" : "Demo mode"} · Terms · Privacy · Safety · Accessibility · © 2026 Feed</footer>
-        </aside>
-      </div>
-
-      <div className="mobile-bottom">
-        <button className={screen === "home" ? "selected" : ""} onClick={() => setScreen("home")}><Home size={21} /></button>
-        <button className={screen === "search" ? "selected" : ""} onClick={() => setScreen("search")}><Search size={21} /></button>
-        <button className="mobile-post-button" onClick={() => setComposer(true)}><Plus size={24} /></button>
-        <button className={screen === "notifications" ? "selected" : ""} onClick={() => setScreen("notifications")}><Bell size={21} /></button>
-        <button className={screen === "profile" ? "selected" : ""} onClick={() => setScreen("profile")}><Avatar value="RB" /></button>
-      </div>
-
-      {menu && (
-        <MoreDrawer
-          onClose={() => setMenu(false)}
-          onOpen={(s) => { setMenu(false); setScreen(s); }}
-          theme={theme}
-          setTheme={setTheme}
-          notify={notify}
-        />
-      )}
-
-      {composer && (
-        <ComposerModal
-          draft={draft}
-          setDraft={setDraft}
-          onClose={() => setComposer(false)}
-          onPublish={publish}
-        />
-      )}
-
-      {toast && <div className="toast">{toast}</div>}
-    </div>
-  );
+  return <div className="bme-app">
+    <header className="bme-mobile-header"><button onClick={()=>setMenu(!menu)}><Menu size={21}/></button><div className="brand-mark"><HeartPulse size={19}/><b>Bio<span>Med</span>Lab</b></div><span className="connection-dot"/></header>
+    <aside className={menu?"bme-sidebar mobile-open":"bme-sidebar"}>
+      <div className="brand"><div className="brand-icon"><HeartPulse size={22}/></div><div><strong>BioMedLab</strong><small>Biomedical Engineering</small></div></div>
+      <div className="sidebar-label">MONITORING</div>
+      {nav.slice(0,4).map(([id,label,Icon])=><button className={screen===id?"bme-nav active":"bme-nav"} key={id} onClick={()=>{setScreen(id);setMenu(false)}}><Icon size={19}/><span>{label}</span>{id==="vitals"&&<i>LIVE</i>}</button>)}
+      <div className="sidebar-label">LAB & HARDWARE</div>
+      {nav.slice(4).map(([id,label,Icon])=><button className={screen===id?"bme-nav active":"bme-nav"} key={id} onClick={()=>{setScreen(id);setMenu(false)}}><Icon size={19}/><span>{label}</span></button>)}
+      <div className="sidebar-spacer"/>
+      <div className="patient-card"><div className="patient-avatar"><UserRound size={18}/></div><div><strong>Research profile</strong><small>Local session</small></div><CheckCircle2 size={15}/></div>
+      <button className="bme-nav" onClick={()=>setScreen("settings")}><Layers3 size={19}/><span>System settings</span></button>
+      <div className="sidebar-footer">BioMedLab v1.0 · BME toolkit</div>
+    </aside>
+    <main className="bme-main">
+      <div className="bme-topbar"><div><span className="eyebrow">BIOMEDICAL ENGINEERING PLATFORM</span><h1>{title(screen)}</h1></div><div className="top-actions"><span className="secure-badge"><ShieldCheck size={15}/> Local-first</span><button className={simulation?"mode-btn active":"mode-btn"} onClick={()=>setSimulation(!simulation)}>{simulation?"Simulation ON":"Simulation OFF"}</button></div></div>
+      {screen==="dashboard"&&<Dashboard setScreen={setScreen} simulation={simulation}/>}
+      {screen==="vitals"&&<Vitals setScreen={setScreen} simulation={simulation}/>}
+      {screen==="heart"&&<HeartRate simulation={simulation}/>}
+      {screen==="spo2"&&<SpO2 simulation={simulation}/>}
+      {screen==="ecg"&&<ECGLab simulation={simulation}/>}
+      {screen==="biometric"&&<Biometrics/>}
+      {screen==="devices"&&<DeviceHub/>}
+      {screen==="research"&&<ResearchLab setScreen={setScreen}/>}
+      {screen==="settings"&&<Settings/>}
+    </main>
+    <div className="bme-mobile-nav">{nav.slice(0,5).map(([id,label,Icon])=><button className={screen===id?"active":""} key={id} onClick={()=>setScreen(id)}><Icon size={18}/><span>{label.split(" ")[0]}</span></button>)}</div>
+  </div>;
 }
 
-function FeedTabs({ screen, setScreen }: { screen: Screen; setScreen: (s: Screen) => void }) {
-  return (
-    <div className="feed-tabs">
-      <button className={screen === "home" ? "selected" : ""} onClick={() => setScreen("home")}>For you</button>
-      <button onClick={() => setScreen("home")}>Following</button>
-    </div>
-  );
+function Dashboard({setScreen,simulation}:{setScreen:(s:Screen)=>void;simulation:boolean}) {
+  return <div className="dashboard">
+    <section className="hero-panel"><div><span className="eyebrow">BME · REAL-TIME INSTRUMENTATION</span><h2>Measure. Visualize. Understand.</h2><p>A biomedical engineering workspace for physiological signals, sensors, biometrics and device experiments.</p><div className="hero-actions"><button className="primary" onClick={()=>setScreen("vitals")}><Play size={16}/> Open vital monitor</button><button className="secondary" onClick={()=>setScreen("devices")}><Bluetooth size={16}/> Connect device</button></div></div><div className="heart-hero"><HeartPulse size={50}/><strong>72</strong><span>BPM · reference</span><div className="mini-wave">{Array.from({length:32},(_,i)=><i key={i} style={{height:(12+Math.abs(Math.sin(i*.8))*22+(i%7===3?18:0))+"px"}}/>)}</div></div></section>
+    <div className="status-strip"><span><span className="live-dot"/> System ready</span><span><Wifi size={14}/> Sensor gateway</span><span><Battery size={14}/> Device power</span><span><Clock3 size={14}/> Session active</span></div>
+    <section className="section-head"><div><span className="eyebrow">PHYSIOLOGICAL DATA</span><h2>Vital signs</h2></div><button onClick={()=>setScreen("vitals")}>Open monitor <ArrowRight size={15}/></button></section>
+    <div className="vital-grid"><VitalCard label="Heart Rate" value="72" unit="BPM" icon={HeartPulse}/><VitalCard label="SpO₂" value="98" unit="%" icon={Droplets}/><VitalCard label="Temperature" value="36.7" unit="°C" icon={Thermometer}/><VitalCard label="Respiratory Rate" value="16" unit="breaths/min" icon={Activity}/></div>
+    <section className="section-head"><div><span className="eyebrow">INSTRUMENTATION</span><h2>Biomedical modules</h2></div></section>
+    <div className="module-grid">{modules.map(([id,name,desc,Icon])=><button className="module-card" key={id} onClick={()=>setScreen(id)}><div className="module-icon"><Icon size={21}/></div><div><strong>{name}</strong><span>{desc}</span></div><ChevronRight size={17}/></button>)}</div>
+    <Notice text={simulation?"Simulation mode is enabled. Values are illustrative and are not medical measurements.":"Connect compatible sensors before using live acquisition."}/>
+  </div>;
 }
 
-function ComposerInline({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div className="inline-composer">
-      <Avatar value="RB" />
-      <button onClick={onOpen}>What is happening?!</button>
-      <button className="mini-post" onClick={onOpen}>Post</button>
-    </div>
-  );
+function VitalCard({label,value,unit,icon:Icon}:{label:string;value:string;unit:string;icon:typeof HeartPulse}) {
+  return <div className="vital-card"><div className="vital-top"><span>{label}</span><Icon size={18}/></div><div className="vital-value">{value}<small>{unit}</small></div><div className="vital-status"><span className="live-dot"/>Reference signal</div></div>;
 }
 
-function PostCard({
-  post, onLike, onRepost, onBookmark, notify,
-}: {
-  post: Post;
-  onLike: (id: string | number) => void;
-  onRepost: (id: string | number) => void;
-  onBookmark: (id: string | number) => void;
-  notify: (s: string) => void;
-}) {
-  return (
-    <article className="post">
-      <Avatar value={post.avatar} verified={post.verified} />
-      <div className="post-main">
-        <div className="post-author">
-          <strong>{post.name}</strong>
-          {post.verified && <span className="blue-check"><Check size={10} /></span>}
-          <span>{post.handle}</span><span>·</span><span>{post.time}</span>
-          <button onClick={() => notify("Post actions")}><MoreHorizontal size={17} /></button>
-        </div>
-        <p>{post.text} {post.tag && <a>{post.tag}</a>}</p>
-        {post.media && <div className={`post-media ${post.media}`}><span>{post.media === "sunset" ? "A new perspective" : post.media === "code" ? "BUILD · CREATE · SHARE" : "THE WORLD IS CONNECTED"}</span></div>}
-        <div className="post-actions">
-          <button onClick={() => notify("Reply")}><MessageCircle /><span>{post.replies}</span></button>
-          <button className={post.reposted ? "reposted" : ""} onClick={() => onRepost(post.id)}><Repeat2 /><span>{post.reposts}</span></button>
-          <button className={post.liked ? "liked" : ""} onClick={() => onLike(post.id)}><Heart fill={post.liked ? "currentColor" : "none"} /><span>{post.likes}</span></button>
-          <button className={post.bookmarked ? "bookmarked" : ""} onClick={() => onBookmark(post.id)}><Bookmark fill={post.bookmarked ? "currentColor" : "none"} /></button>
-          <button onClick={() => notify("Share options")}><Share2 /></button>
-        </div>
-        <div className="post-metadata">{post.views.toLocaleString()} views · Anyone can reply</div>
-      </div>
-    </article>
-  );
+function Vitals({setScreen,simulation}:{setScreen:(s:Screen)=>void;simulation:boolean}) {
+  return <div className="monitor-page"><div className="monitor-header"><div><span className="eyebrow">MULTI-PARAMETER MONITOR</span><h2>Physiological signal overview</h2></div><button className="primary" onClick={()=>setScreen("heart")}><Camera size={16}/> Start camera PPG</button></div><div className="big-vitals"><VitalCard label="Heart Rate" value="72" unit="BPM" icon={HeartPulse}/><VitalCard label="SpO₂" value="98" unit="%" icon={Droplets}/><VitalCard label="Temperature" value="36.7" unit="°C" icon={Thermometer}/></div><div className="signal-panel"><div className="signal-head"><div><strong>ECG-style signal workspace</strong><span>Educational waveform visualization</span></div><span className="signal-live"><span className="live-dot"/> LIVE</span></div><SignalWave/><div className="signal-metrics"><span>Sampling <b>250 Hz</b></span><span>Gain <b>10 mm/mV</b></span><span>Lead <b>II</b></span><span>Filter <b>0.5–40 Hz</b></span></div></div><Notice text={simulation?"Waveform and values are simulated reference data.":"Live acquisition requires a compatible calibrated sensor."}/></div>;
 }
 
-function SearchScreen({ query, setQuery, onOpen }: { query: string; setQuery: (v: string) => void; onOpen: (s: Screen) => void }) {
-  return (
-    <div className="page-panel">
-      <div className="mobile-search search-box"><Search size={18} /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" /></div>
-      <div className="search-filter-row">{["Top", "Latest", "People", "Media"].map((x, i) => <button className={i === 0 ? "active" : ""} key={x}>{x}</button>)}</div>
-      <div className="discover-hero"><span>EXPLORE</span><h1>Find what’s next.</h1><p>People, conversations, creators, topics and live rooms.</p></div>
-      {trends.map(([x, c]) => <button className="discover-row" key={x}><span><small>Trending now</small><strong>#{x.replaceAll(" ", "")}</strong><small>{c}</small></span><MoreHorizontal size={17} /></button>)}
-      <button className="primary-full" onClick={() => onOpen("communities")}>Explore communities</button>
-    </div>
-  );
+function HeartRate({simulation}:{simulation:boolean}) {
+  const videoRef=useRef<HTMLVideoElement>(null),canvasRef=useRef<HTMLCanvasElement>(null);
+  const [running,setRunning]=useState(false),[bpm,setBpm]=useState(72),[samples,setSamples]=useState<number[]>([]);
+  useEffect(()=>{if(!running)return;let stream:MediaStream|undefined,raf=0,last=0,values:number[]=[];navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"},audio:false}).then(s=>{stream=s;if(videoRef.current){videoRef.current.srcObject=s;void videoRef.current.play()}}).catch(()=>setRunning(false));const tick=(t:number)=>{if(t-last>120&&videoRef.current?.readyState&&canvasRef.current){const v=videoRef.current,c=canvasRef.current,x=c.getContext("2d");if(x){c.width=32;c.height=24;x.drawImage(v,0,0,32,24);const d=x.getImageData(0,0,32,24).data;let red=0;for(let i=0;i<d.length;i+=4)red+=d[i];red/=d.length/4;values.push(red);if(values.length>80)values.shift();setSamples(values.slice(-55));if(values.length>=35){const mean=values.reduce((a,b)=>a+b,0)/values.length;let crossings=0;for(let i=1;i<values.length;i++)if(values[i-1]<mean&&values[i]>=mean)crossings++;const estimate=Math.round(Math.max(45,Math.min(160,crossings*60/(values.length*.12)));if(Number.isFinite(estimate))setBpm(estimate)}}last=t}raf=requestAnimationFrame(tick)};raf=requestAnimationFrame(tick);return()=>{cancelAnimationFrame(raf);stream?.getTracks().forEach(t=>t.stop())}},[running]);
+  return <div className="lab-page"><LabIntro icon={HeartPulse} title="Heart-rate acquisition" subtitle="Educational camera-PPG experiment. Place a fingertip over the camera when the hardware permits optical reflection."/><div className="acquisition-grid"><div className="camera-card">{running?<><video ref={videoRef} muted playsInline/><canvas ref={canvasRef}/><div className="camera-overlay"><Fingerprint size={40}/><b>Cover the camera with your fingertip</b></div></>:<div className="camera-placeholder"><Camera size={45}/><strong>Camera PPG</strong><span>Browser camera permission is required.</span></div>}<button className={running?"danger":"primary"} onClick={()=>setRunning(!running)}>{running?"Stop acquisition":"Start camera acquisition"}</button></div><div className="reading-card"><span className="eyebrow">ESTIMATED HEART RATE</span><div className="reading-number">{bpm}<small>BPM</small></div><HeartPulse size={31}/><div className="sample-bars">{(samples.length?samples:Array.from({length:30},(_,i)=>40+Math.sin(i*.7)*20)).map((v,i)=><i key={i} style={{height:(10+Math.abs(v-50)*1.5)+"px"}}/>)}</div><span className="reading-note">{running?"Experimental camera-derived estimate":"Reference value"}</span></div></div><Notice text={simulation?"Camera PPG is an educational experiment, not a clinical-grade monitor. Motion, lighting and camera hardware affect accuracy.":"Live mode is experimental and should not be used for diagnosis."}/></div>;
 }
 
-function NotificationsScreen() {
-  const items = [["Maya liked your post", "2m", "MC"], ["Adnan mentioned you", "18m", "AD"], ["Future Lab posted a new video", "1h", "FL"], ["You have 3 new followers", "2h", "3+"]];
-  return (
-    <div className="page-panel">
-      <div className="segmented">{["All", "Mentions", "Follows"].map((x, i) => <button className={i === 0 ? "active" : ""} key={x}>{x}</button>)}</div>
-      {items.map((x) => <div className="notification-row" key={x[0]}><Avatar value={x[2]} /><div><strong>{x[0]}</strong><span>{x[1]}</span></div></div>)}
-    </div>
-  );
-}
+function SpO2({simulation}:{simulation:boolean}) { return <div className="lab-page"><LabIntro icon={Droplets} title="Pulse oximetry" subtitle="Explore the optical principles behind SpO₂ measurement and sensor acquisition."/><div className="spo2-layout"><div className="spo2-reading"><span>SIMULATED READING</span><strong>98<small>%</small></strong><div className="oxygen-ring"><Droplets size={30}/></div><b>Reference value</b></div><div className="info-card"><h3>How a pulse oximeter works</h3><p>Red and infrared light are used to estimate relative absorption associated with oxygenated and deoxygenated hemoglobin.</p><div className="principles"><span><Zap/> Red light</span><span><Radio/> Infrared</span><span><Cpu/> Signal processing</span></div></div></div><Notice text={simulation?"The displayed SpO₂ value is simulated.":"Connect a compatible calibrated pulse-oximeter sensor for acquisition."}/></div>; }
 
-function MessagesScreen({ notify, user }: { notify: (s: string) => void; user: User | null }) {
-  const [users, setUsers] = useState<FeedUser[]>([]);
-  const [selected, setSelected] = useState<FeedUser | null>(null);
-  const [messages, setMessages] = useState<FeedMessage[]>([]);
-  const [text, setText] = useState("");
+function ECGLab({simulation}:{simulation:boolean}) { return <div className="lab-page"><LabIntro icon={Activity} title="ECG signal laboratory" subtitle="Visualize an educational ECG waveform and inspect acquisition parameters."/><div className="ecg-panel"><div className="ecg-toolbar"><span><span className="live-dot"/> Signal running</span><button><RefreshCw size={15}/> Recalibrate</button></div><SignalWave/><div className="ecg-grid"><Metric label="Sampling rate" value="250 Hz"/><Metric label="Lead" value="Lead II"/><Metric label="Gain" value="10 mm/mV"/><Metric label="Filter" value="0.5–40 Hz"/></div></div><Notice text={simulation?"Educational ECG waveform. It is not a patient's ECG and must not be used for diagnosis.":"Connect an approved acquisition device before interpreting real signals."}/></div>; }
 
-  useEffect(() => {
-    if (!firebaseEnabled) return;
-    return watchUsers((items) => setUsers(items.filter((x) => x.uid !== user?.uid)));
-  }, [user?.uid]);
+function SignalWave(){const points=Array.from({length:160},(_,i)=>{const p=(i/160*12)%1.2;let y=0;if(p>.44&&p<.52)y=-.14*Math.sin((p-.44)/.08*Math.PI);if(p>.53&&p<.57)y=.9*Math.sin((p-.53)/.04*Math.PI);if(p>.57&&p<.62)y=-.28*Math.sin((p-.57)/.05*Math.PI);if(p>.72&&p<.92)y=-.18*Math.sin((p-.72)/.2*Math.PI);return (i/159*100)+","+(50-y*30)}).join(" ");return <div className="wave"><svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points={points}/></svg></div>}
 
-  useEffect(() => {
-    if (!firebaseEnabled || !user || !selected) return;
-    const conversationId = conversationIdFor(user.uid, selected.uid);
-    void touchConversation(conversationId, [user.uid, selected.uid]).catch(() => {});
-    return watchMessages(conversationId, setMessages);
-  }, [user, selected]);
+function Biometrics(){const [status,setStatus]=useState("Ready");const supported=typeof window!=="undefined"&&!!window.PublicKeyCredential;const enroll=async()=>{if(!supported){setStatus("WebAuthn is not supported");return}setStatus("Use your device biometric when prompted…");try{await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rp:{name:"BioMedLab"},user:{id:crypto.getRandomValues(new Uint8Array(16)),name:"research-user",displayName:"BioMedLab User"},pubKeyCredParams:[{alg:-7,type:"public-key"},{alg:-257,type:"public-key"}],authenticatorSelection:{authenticatorAttachment:"platform",userVerification:"required"},timeout:60000}});setStatus("Platform biometric enrolled")}catch{setStatus("Enrollment cancelled or unavailable")}};return <div className="lab-page"><LabIntro icon={Fingerprint} title="Biometric identity" subtitle="Use your device's platform authenticator for biometric-gated access."/><div className="biometric-card"><div className="fingerprint-large"><Fingerprint size={82}/></div><div><span className="eyebrow">WEBAUTHN / PLATFORM AUTHENTICATOR</span><h2>Fingerprint-ready security</h2><p>Supported phones can request fingerprint, face or device PIN verification. The website receives a cryptographic credential, not raw biometric data.</p><div className="bio-status"><CheckCircle2 size={17}/>{status}</div><button className="primary" onClick={enroll}>{supported?"Register device biometric":"Check browser support"}</button></div></div><Notice text="Websites cannot directly read or store raw fingerprint images. WebAuthn delegates biometric verification to the device secure authenticator." /></div>}
 
-  const send = async () => {
-    const value = text.trim();
-    if (!value || !user || !selected) return;
-    try {
-      await sendMessage(user, conversationIdFor(user.uid, selected.uid), value);
-      setText("");
-    } catch {
-      notify("Message could not be sent");
-    }
-  };
+function DeviceHub(){const [connected,setConnected]=useState(false);return <div className="lab-page"><LabIntro icon={Bluetooth} title="Biomedical device hub" subtitle="Control surface for BLE sensors, wearables and future IoT acquisition hardware."/><div className="device-grid"><Device name="BLE Heart Sensor" type="Heart-rate sensor" icon={HeartPulse} connected={connected} onClick={()=>setConnected(!connected)}/><Device name="Pulse Oximeter" type="SpO₂ / pulse" icon={Droplets}/><Device name="ECG Acquisition Board" type="Analog front-end" icon={Activity}/><Device name="Temperature Sensor" type="Digital temperature" icon={Thermometer}/></div><div className="protocol-card"><Bluetooth size={20}/><div><strong>BLE integration layer</strong><p>Sensor → packet validation → signal processing → visualization → biomedical context.</p></div><span>READY</span></div></div>}
 
-  if (!firebaseEnabled) {
-    return <div className="page-panel messages"><div className="section-title-row"><div><small>DEMO MODE</small><h2>Messages</h2></div><button onClick={() => notify("Configure Firebase to enable real messaging")}><PenLine size={18} /></button></div><div className="message-note"><Shield size={16} /> Real-time messaging is disabled until the Firebase environment variables are configured.</div></div>;
-  }
+function Device({name,type,icon:Icon,connected=false,onClick=()=>{}}:{name:string;type:string;icon:typeof HeartPulse;connected?:boolean;onClick?:()=>void}){return <div className="device-card"><div className="device-icon"><Icon size={24}/></div><div><strong>{name}</strong><span>{type}</span></div><div className={connected?"device-state on":"device-state"}><span className="live-dot"/>{connected?"Connected":"Available"}</div><button onClick={onClick}>{connected?"Disconnect":"Connect"}</button></div>}
 
-  return (
-    <div className="page-panel messages">
-      <div className="section-title-row"><div><small>LIVE INBOX</small><h2>Messages</h2></div><span className="live-status">● Live</span></div>
-      {!selected ? (
-        <>
-          <div className="message-tabs"><button className="active">People</button><button>Requests</button><button>Archived</button></div>
-          {users.length === 0 && <div className="empty"><Users size={28} /><h2>No other Feed users yet</h2><p>When another user joins, they will appear here.</p></div>}
-          {users.map((person) => <button className="message-row" key={person.uid} onClick={() => setSelected(person)}><Avatar value={initials(person.name)} /><span><strong>{person.name}</strong><small>@{person.handle.replace(/^@/, "")}</small></span><ChevronRight size={16} /></button>)}
-        </>
-      ) : (
-        <>
-          <div className="chat-head"><button onClick={() => setSelected(null)}><ChevronLeft size={18} /></button><Avatar value={initials(selected.name)} /><div><strong>{selected.name}</strong><small>@{selected.handle.replace(/^@/, "")}</small></div></div>
-          <div className="chat-messages">
-            {messages.map((m) => <div className={m.senderId === user?.uid ? "chat-bubble mine" : "chat-bubble"} key={m.id}>{m.text}</div>)}
-            {!messages.length && <div className="empty"><MessageCircle size={26} /><p>Start the conversation.</p></div>}
-          </div>
-          <div className="message-input"><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…" onKeyDown={(e) => { if (e.key === "Enter") void send(); }} /><button onClick={() => void send()} disabled={!text.trim()}><Send size={18} /></button></div>
-        </>
-      )}
-    </div>
-  );
-}
+function ResearchLab({setScreen}:{setScreen:(s:Screen)=>void}){const cards:[string,string,Screen,typeof Cpu][]=[["Biomedical Instrumentation","Sensors, transducers, amplifiers, ADC and acquisition chains.","devices",Cpu],["Cardiovascular Engineering","ECG, PPG, heart-rate and hemodynamic signals.","heart",HeartPulse],["Medical Imaging","Imaging modalities and biomedical image processing.","ecg",MonitorSmartphone],["Biomaterials & Devices","Implants, prosthetics and tissue interfaces.","devices",Layers3],["Biopotential Signals","ECG, EMG, EEG and signal conditioning foundations.","ecg",Activity],["Digital Health","Wearables, IoT telemetry and physiological data systems.","vitals",Wifi]];return <div className="research-page"><div className="research-banner"><span className="eyebrow">B.E. BIOMEDICAL ENGINEERING</span><h2>Engineering for human health.</h2><p>A structured workspace for learning, prototyping and experimenting with biomedical systems.</p></div><div className="research-grid">{cards.map(([name,desc,target,Icon])=><button className="research-card" key={name} onClick={()=>setScreen(target)}><Icon size={22}/><strong>{name}</strong><span>{desc}</span><ArrowRight size={16}/></button>)}</div><div className="curriculum"><span className="eyebrow">ENGINEERING TOOLBOX</span><h2>Core BME workflow</h2><div className="workflow">{["Patient / subject","Sensor / transducer","Signal conditioning","ADC / acquisition","Digital filtering","Feature extraction","Visualization","Clinical context"].map((x,i)=><div key={x}><b>{String(i+1).padStart(2,"0")}</b><span>{x}</span>{i<7&&<ArrowRight size={13}/>}</div>)}</div></div></div>}
 
-function ProfileScreen({ posts, onPost }: { posts: Post[]; onPost: () => void }) {
-  return (
-    <div className="profile">
-      <div className="profile-banner" />
-      <div className="profile-main">
-        <Avatar value="RB" verified />
-        <div className="profile-buttons"><button onClick={onPost}>Post</button><button><Settings size={17} /></button></div>
-        <h1>Riyash B <span className="blue-check"><Check size={10} /></span></h1>
-        <span className="handle">@riyashb</span>
-        <p>Builder · Student · Creator</p>
-        <div className="profile-meta">4.8K followers · 612 following</div>
-        <div className="profile-actions"><button>Follow</button><button><Mail size={16} /> Message</button></div>
-      </div>
-      <div className="profile-tabs">{["Posts", "Replies", "Media", "Likes"].map((x, i) => <button className={i === 0 ? "active" : ""} key={x}>{x}</button>)}</div>
-      {posts.slice(0, 2).map((p) => <PostCard key={p.id} post={p} onLike={() => {}} onRepost={() => {}} onBookmark={() => {}} notify={() => {}} />)}
-    </div>
-  );
-}
+function Settings(){return <div className="settings-page"><div className="settings-card"><span className="eyebrow">PLATFORM</span><h2>BioMedLab settings</h2>{["Units · Metric (SI)","Signal refresh · 250 Hz workspace","Simulation · User controlled","Privacy · Local-first by default","Accessibility · Reduced motion available"].map(x=><div className="setting-line" key={x}><span>{x}</span><ChevronRight size={16}/></div>)}</div><Notice text="BioMedLab is an educational/prototyping interface. Validate sensor hardware, calibration and clinical requirements before real-world use."/></div>}
 
-function BookmarksScreen({ posts, onLike, onRepost, onBookmark, notify }: { posts: Post[]; onLike: (id: string | number) => void; onRepost: (id: string | number) => void; onBookmark: (id: string | number) => void; notify: (s: string) => void }) {
-  const saved = posts.filter((p) => p.bookmarked || p.id === 1);
-  return <div className="page-panel"><div className="section-title-row"><div><small>SAVED</small><h2>Bookmarks</h2></div><button onClick={() => notify("Bookmark folders")}><ListIcon size={18} /></button></div><div className="bookmark-toolbar"><button className="active">All</button><button>Folders</button></div>{saved.map((p) => <PostCard key={p.id} post={p} onLike={onLike} onRepost={onRepost} onBookmark={onBookmark} notify={notify} />)}</div>;
-}
-
-function ListsScreen({ notify }: { notify: (s: string) => void }) {
-  const lists = [["AI Builders", "12.4K followers"], ["Football", "8.2K followers"], ["Campus Tech", "1.9K followers"]];
-  return <div className="page-panel"><div className="section-title-row"><div><small>CURATED</small><h2>Lists</h2></div><button onClick={() => notify("Create a list")}><Plus size={18} /></button></div>{lists.map((x) => <button className="setting-row" key={x[0]}><i className="setting-icon"><ListIcon size={18} /></i><span><strong>{x[0]}</strong><small>{x[1]} · Public list</small></span><ChevronRight size={17} /></button>)}</div>;
-}
-
-function CommunitiesScreen({ notify }: { notify: (s: string) => void }) {
-  const comm = [["AI Builders", "128K members", "AI"], ["Creators India", "74K members", "CR"], ["Football Hub", "218K members", "FC"], ["Study Together", "62K members", "ST"]];
-  return <div className="page-panel"><div className="section-title-row"><div><small>COMMUNITIES</small><h2>Find your people</h2></div><button onClick={() => notify("Create community")}><Plus size={18} /></button></div><div className="community-list">{comm.map((x) => <div className="community-card" key={x[0]}><div className="community-icon">{x[2]}</div><div><strong>{x[0]}</strong><small>{x[1]}</small><p>Posts · members · live rooms</p></div><button onClick={() => notify("Joined " + x[0])}>Join</button></div>)}</div></div>;
-}
-
-function SpacesScreen({ notify }: { notify: (s: string) => void }) {
-  const rooms = [["Late Night Tech", "1.8K listening", "AI · Tech"], ["Football Watch Party", "6.2K listening", "Sports"], ["Study With Me", "742 listening", "Study"], ["Creator Q&A", "3.1K listening", "Creators"]];
-  return <div className="page-panel"><div className="section-title-row"><div><small>LIVE AUDIO</small><h2>Rooms</h2></div><button onClick={() => notify("Create live room")}><Radio size={18} /></button></div><div className="room-grid">{rooms.map((x) => <button className="room-card" key={x[0]} onClick={() => notify("Joining " + x[0])}><span className="live-badge"><Radio size={12} /> LIVE</span><div className="room-art"><Mic2 size={34} /></div><strong>{x[0]}</strong><small>{x[1]} · {x[2]}</small><div className="room-people"><Avatar value="A" /><Avatar value="B" /><Avatar value="C" /><span>+1K</span></div></button>)}</div></div>;
-}
-
-function DraftsScreen({ notify }: { notify: (s: string) => void }) {
-  return <div className="page-panel"><div className="section-title-row"><div><small>COMPOSER</small><h2>Drafts</h2></div><button onClick={() => notify("New draft")}><Plus size={18} /></button></div><div className="empty"><FileText size={28} /><h2>No drafts yet</h2><p>Unfinished posts will appear here.</p></div></div>;
-}
-
-function SubscriptionsScreen() {
-  return <div className="page-panel"><div className="discover-hero"><span>CREATOR ECONOMY</span><h1>Subscriptions</h1><p>Support creators, access subscriber-only communities and manage memberships.</p></div><div className="feature-grid">{["Subscriber badge", "Exclusive posts", "Private communities", "Creator perks"].map((x) => <div className="feature-card" key={x}><Sparkles size={19} /><strong>{x}</strong><span>Built into Feed.</span></div>)}</div></div>;
-}
-
-const settingsGroups: { title: string; items: SettingsItem[] }[] = [
-  {
-    title: "Your account",
-    items: [
-      { id: "account", title: "Account information", subtitle: "Email, username, connected accounts", icon: UserRound },
-      { id: "security", title: "Security and account access", subtitle: "Password, 2FA, active sessions", icon: KeyRound },
-    ],
-  },
-  {
-    title: "Privacy and safety",
-    items: [
-      { id: "privacy", title: "Privacy and safety", subtitle: "Audience, blocks, mutes, replies, mentions", icon: Shield },
-      { id: "content", title: "Content preferences", subtitle: "Sensitive content, hidden words, media", icon: SlidersHorizontal },
-    ],
-  },
-  {
-    title: "Notifications",
-    items: [{ id: "notifications-settings", title: "Notifications", subtitle: "Push, email, mentions, messages", icon: Bell }],
-  },
-  {
-    title: "Accessibility and display",
-    items: [
-      { id: "display", title: "Display", subtitle: "Theme, font size, motion, media", icon: Palette },
-      { id: "accessibility", title: "Accessibility", subtitle: "Screen reader, captions and motion", icon: Accessibility },
-      { id: "language", title: "Language", subtitle: "App and content languages", icon: Languages },
-    ],
-  },
-  {
-    title: "Creator and more",
-    items: [
-      { id: "subscriptions", title: "Subscriptions", subtitle: "Creator memberships and benefits", icon: Sparkles },
-      { id: "help", title: "Help and about", subtitle: "Help center, report, terms and privacy", icon: CircleHelp },
-    ],
-  },
-];
-
-function SettingsScreen({ search, setSearch, onOpen }: { search: string; setSearch: (v: string) => void; onOpen: (s: Screen) => void }) {
-  const groups = settingsGroups
-    .map((g) => ({ ...g, items: g.items.filter((i) => (i.title + " " + (i.subtitle ?? "")).toLowerCase().includes(search.toLowerCase())) }))
-    .filter((g) => g.items.length);
-  return (
-    <div className="page-panel settings-page">
-      <div className="section-title-row"><div><small>SYSTEM</small><h2>Settings</h2></div><button><MoreHorizontal size={18} /></button></div>
-      <div className="settings-search"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search settings" /></div>
-      {groups.map((g) => <section className="settings-group" key={g.title}><h3>{g.title}</h3>{g.items.map((i) => {
-        const Icon = i.icon;
-        return <button className="setting-row" key={i.id} onClick={() => onOpen(i.id)}><i className="setting-icon"><Icon size={18} /></i><span><strong>{i.title}</strong><small>{i.subtitle}</small></span><ChevronRight size={17} /></button>;
-      })}</section>)}
-    </div>
-  );
-}
-
-function SettingsDetail({ screen, onBack, notify }: { screen: Screen; onBack: () => void; notify: (s: string) => void }) {
-  const data: Record<string, { title: string; subtitle: string; rows: [string, string][] }> = {
-    account: { title: "Account information", subtitle: "Manage identity and account connections.", rows: [["Username", "@riyashb"], ["Email", "Connected"], ["Phone", "Not added"], ["Connected accounts", "Instagram · Facebook"], ["Account type", "Personal"]] },
-    security: { title: "Security and account access", subtitle: "Keep your account protected.", rows: [["Password", "Change password"], ["Two-factor authentication", "Off"], ["Passkeys", "Set up a passkey"], ["Active sessions", "2 devices"], ["Login alerts", "On"]] },
-    privacy: { title: "Privacy and safety", subtitle: "Control who can interact with you and your content.", rows: [["Private account", "Off"], ["Mentions", "People you follow"], ["Replies", "Everyone"], ["Tags", "Everyone"], ["Blocked accounts", "0 accounts"], ["Muted accounts", "0 accounts"], ["Restricted accounts", "0 accounts"], ["Hidden words", "Manage hidden words"], ["Discoverability", "Email and phone"]] },
-    "notifications-settings": { title: "Notifications", subtitle: "Choose what Feed tells you about.", rows: [["Push notifications", "On"], ["Mentions", "On"], ["Replies", "On"], ["Likes", "On"], ["New followers", "On"], ["Messages", "On"], ["Live rooms", "Off"], ["Email notifications", "On"]] },
-    display: { title: "Display", subtitle: "Make Feed comfortable on your device.", rows: [["Theme", "Dark"], ["Font size", "Default"], ["Reduce motion", "Off"], ["Autoplay media", "Wi-Fi and mobile data"], ["Media quality", "Auto"], ["Data saver", "Off"]] },
-    content: { title: "Content preferences", subtitle: "Shape your feed and media experience.", rows: [["Sensitive content", "Show when relevant"], ["Hidden words", "Manage"], ["Topics", "AI · Tech · Football · Anime"], ["Languages", "English · Tamil"], ["Muted words", "0 words"], ["Search safety", "Standard"]] },
-    accessibility: { title: "Accessibility", subtitle: "Options for readable, accessible experiences.", rows: [["Screen reader labels", "On"], ["Bold text", "Off"], ["Reduce motion", "Off"], ["Auto captions", "On"], ["Alt text reminders", "On"]] },
-    language: { title: "Language", subtitle: "Choose how Feed communicates with you.", rows: [["App language", "English"], ["Content languages", "English · Tamil"], ["Translation", "Automatic"], ["Region", "India"]] },
-    help: { title: "Help and about", subtitle: "Support, policies and product information.", rows: [["Help Center", "Open help"], ["Report a problem", "Send feedback"], ["Safety Center", "Safety resources"], ["Terms of Service", "View terms"], ["Privacy Policy", "View privacy"], ["About Feed", "Version 0.1.0"]] },
-  };
-  const x = data[screen] ?? data.help;
-  return (
-    <div className="page-panel detail-page">
-      <button className="back-button" onClick={onBack}><ChevronLeft size={18} /> Settings</button>
-      <div className="discover-hero"><span>SYSTEM</span><h1>{x.title}</h1><p>{x.subtitle}</p></div>
-      <div className="detail-list">{x.rows.map(([title, value]) => <button className="setting-row" key={title} onClick={() => notify(title)}><span><strong>{title}</strong><small>{value}</small></span><ChevronRight size={17} /></button>)}</div>
-      <button className="danger-row" onClick={() => notify("Action unavailable in demo")}><LogOut size={18} /> Sign out / deactivate</button>
-    </div>
-  );
-}
-
-function MoreDrawer({
-  onClose, onOpen, theme, setTheme, notify,
-}: {
-  onClose: () => void;
-  onOpen: (s: Screen) => void;
-  theme: "dark" | "light";
-  setTheme: (t: "dark" | "light") => void;
-  notify: (s: string) => void;
-}) {
-  const items: [Screen, string, typeof Bookmark][] = [
-    ["drafts", "Drafts", FileText], ["bookmarks", "Bookmarks", Bookmark], ["lists", "Lists", ListIcon],
-    ["communities", "Communities", Users], ["spaces", "Live audio", Mic2],
-    ["subscriptions", "Subscriptions", Sparkles], ["settings", "Settings", Settings],
-  ];
-
-  return (
-    <div className="drawer-layer" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-head"><strong>More</strong><button onClick={onClose}><X size={19} /></button></div>
-        <div className="drawer-account"><Avatar value="RB" /><div><strong>Riyash B</strong><span>@riyashb</span></div></div>
-        {items.map(([id, label, Icon]) => <button className="drawer-row" key={id} onClick={() => onOpen(id)}><Icon size={20} /><span>{label}</span><ChevronRight size={16} /></button>)}
-        <div className="drawer-divider" />
-        <button className="drawer-row" onClick={() => { setTheme(theme === "dark" ? "light" : "dark"); notify("Theme changed"); }}><Palette size={20} /><span>Toggle theme</span><span className="theme-dot" /></button>
-        <button className="drawer-row" onClick={() => notify("Help & support")}><Flag size={20} /><span>Help & support</span></button>
-      </aside>
-    </div>
-  );
-}
-
-function ComposerModal({ draft, setDraft, onClose, onPublish }: { draft: string; setDraft: (v: string) => void; onClose: () => void; onPublish: () => void }) {
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="compose-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="compose-head"><button onClick={onClose}><X size={19} /></button><strong>New post</strong><button className="modal-post" disabled={!draft.trim()} onClick={onPublish}>Post</button></div>
-        <div className="compose-body"><Avatar value="RB" /><textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="What is happening?!" autoFocus maxLength={500} /></div>
-        <div className="compose-controls"><button><ImageIcon size={18} /></button><button><Video size={18} /></button><button><Mic2 size={18} /></button><button><Sparkles size={18} /></button><button><SlidersHorizontal size={18} /></button><span>{500 - draft.length}</span></div>
-        <div className="reply-control"><span>Anyone can reply</span><ChevronDown size={16} /></div>
-      </div>
-    </div>
-  );
-}
-
-
-function initials(name: string) {
-  return name.split(/\s+/).map((x) => x[0]).join("").slice(0, 2).toUpperCase() || "FD";
-}
-
-function formatPostTime(value: unknown) {
-  const date = value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function"
-    ? (value as { toDate: () => Date }).toDate()
-    : value instanceof Date ? value : null;
-  if (!date) return "now";
-  const seconds = Math.max(1, Math.floor((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
-
-function EmptyState() {
-  return <div className="empty"><Search size={30} /><h2>No posts found</h2><p>Try a different search.</p></div>;
-}
+function LabIntro({icon:Icon,title,subtitle}:{icon:typeof HeartPulse;title:string;subtitle:string}){return <div className="lab-intro"><div className="lab-icon"><Icon size={25}/></div><div><span className="eyebrow">BIOMEDICAL SIGNAL LAB</span><h2>{title}</h2><p>{subtitle}</p></div></div>}
+function Metric({label,value}:{label:string;value:string}){return <div><span>{label}</span><strong>{value}</strong></div>}
+function Notice({text}:{text:string}){return <div className="notice"><AlertTriangle size={17}/><span>{text}</span></div>}
