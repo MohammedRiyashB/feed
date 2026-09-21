@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowRight, Battery, Bluetooth, Camera, CheckCircle2,
   ChevronRight, CircleGauge, Clock3, Cpu, Droplets, Fingerprint, HeartPulse, Home,
-  Info, Layers3, Menu, Microscope, Play, Radio, RefreshCw, ShieldCheck,
+  Info, Layers3, Menu, Microscope, MonitorSmartphone, Play, Radio, RefreshCw, ShieldCheck,
   Thermometer, UserRound, Wifi, X, Zap
 } from "lucide-react";
 
