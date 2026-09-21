@@ -142,3 +142,33 @@ function SpO2(){ return <div className="lab-page"><LabIntro icon={Droplets} titl
 type BluetoothDeviceLike={name?:string;gatt?:{connect:()=>Promise<unknown>;disconnect:()=>void}|null;addEventListener:(type:string,listener:()=>void)=>void};
 type BluetoothLike={requestDevice:(options:{acceptAllDevices:boolean})=>Promise<BluetoothDeviceLike>};
 
+
+function Notice({text}:{text:string}) {
+  return <div className="notice"><AlertTriangle size={17}/><span>{text}</span></div>;
+}
+
+function LabIntro({icon:Icon,title,subtitle}:{icon:typeof HeartPulse;title:string;subtitle:string}) {
+  return <div className="lab-intro"><div className="lab-intro-icon"><Icon size={25}/></div><div><span className="eyebrow">BIOMEDICAL ENGINEERING</span><h2>{title}</h2><p>{subtitle}</p></div></div>;
+}
+
+function Metric({label,value}:{label:string;value:string}) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function Device({name,type,icon:Icon,connected=false,onClick}:{name:string;type:string;icon:typeof HeartPulse;connected?:boolean;onClick:()=>void}) {
+  return <button className="device-card" onClick={onClick}><div className="module-icon"><Icon size={21}/></div><div><strong>{name}</strong><span>{type}</span></div><span className={connected?"device-state connected":"device-state"}>{connected?"CONNECTED":"CONNECT"}</span></button>;
+}
+
+function ResearchLab({setScreen}:{setScreen:(s:Screen)=>void}) {
+  const topics=[
+    ["Signal acquisition","Sampling, filtering, ADCs and noise reduction."],
+    ["Physiological systems","Heart, circulation, respiration and biosignal fundamentals."],
+    ["Biomedical instrumentation","Sensors, transducers, front-ends and embedded acquisition."],
+    ["Digital health","Device interoperability, secure data handling and research workflows."]
+  ];
+  return <div className="lab-page"><LabIntro icon={Microscope} title="Biomedical engineering lab" subtitle="Reference material and practical instrumentation workflows for BME study and prototyping."/><div className="research-grid">{topics.map(([name,desc])=><article className="info-card" key={name}><div className="module-icon"><Microscope size={19}/></div><h3>{name}</h3><p>{desc}</p></article>)}</div><div className="info-card"><h3>Acquisition workflow</h3><p>Sensor → analog front-end → ADC → signal processing → validated measurement. Connect real hardware through Device Hub before expecting live physiological data.</p><button className="secondary" onClick={()=>setScreen("devices")}>Open Device Hub <ArrowRight size={15}/></button></div></div>;
+}
+
+function Settings() {
+  return <div className="lab-page"><LabIntro icon={Layers3} title="System settings" subtitle="Local application configuration and measurement safety information."/><div className="settings-grid"><div className="info-card"><h3>Measurement policy</h3><p>BioMedLab does not fabricate patient measurements. Values remain unavailable until a real acquisition source supplies them.</p></div><div className="info-card"><h3>Security</h3><p>Platform biometrics use WebAuthn. The browser receives cryptographic credentials rather than raw fingerprint images or templates.</p></div><div className="info-card"><h3>Browser capabilities</h3><p>Camera PPG, WebAuthn and Web Bluetooth availability depends on the phone, browser, permissions and secure-context requirements.</p></div></div><Notice text="Biomedical measurements shown by this educational application should not be treated as a diagnosis or replacement for validated medical equipment." /></div>;
+}
